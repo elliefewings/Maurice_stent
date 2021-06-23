@@ -1,0 +1,333 @@
+---
+author: "Eleanor Fewings"
+output: html_document
+---
+
+# start_section  
+```{r start_section}
+
+# Time stamp
+Sys.time()
+
+# Clean up
+rm(list=ls())
+
+# Load libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(magrittr)
+library(Seurat)
+library(cowplot)
+library(stringr)
+library(igraph)
+library(ComplexHeatmap)
+library(ggraph)
+library(networkD3)
+
+# Folders
+setwd("~/Saez/Maurice_stent_analysis/")
+
+```
+
+
+## Load data
+```{r load}
+
+load("results/integration.de.RData")
+
+```
+
+#Clean up unnecessary data
+```{r clean}
+
+rm(list=c(ls(pattern="^stent"), ls(pattern="^avg")))
+
+```
+
+
+#Label cell types
+```{r}
+
+types <- c("0"="B-cells",
+           "1"="T-cells",
+           "2"="T-cells",
+           "3"="Fibroblast",
+           "4"="Macrophages",
+           "5"="VSMC",
+           "6"="RBC",
+           "7"="Endothelial",
+           "8"="Endothelial",
+           "9"="Unknown",
+           "10"="Neuron")
+
+data <- SetIdent(data, value="cluster")
+data <- RenameIdents(data, types)
+
+data$celltype <- Idents(data)
+
+#Create meta cols for each comparison
+#Immune vs vsmc/fibro
+data$comp1 <- NA
+data$comp1[data$cluster %in% c("0", "1", "2", "4")] <- "immune"
+data$comp1[data$cluster %in% c("3", "5")] <- "vsmcfibro"
+
+#endothelial vs vsmc/fibro
+data$comp2 <- NA
+data$comp2[data$cluster %in% c("7", "8")] <- "endo"
+data$comp2[data$cluster %in% c("3", "5")] <- "vsmcfibro"
+
+#Subset data
+case <- SetIdent(data, value="cc")
+case <- subset(case, idents="case")
+
+#Subset data
+control <- SetIdent(data, value="cc")
+control <- subset(control, idents="control")
+```
+
+#Function to convert rat to human genes - case
+```{r}
+
+rna.mx <- case@assays$RNA@data %>% as.matrix()
+
+convertratGeneList <- function(x){
+require("biomaRt")
+human <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+rat <- useMart("ensembl", dataset = "rnorvegicus_gene_ensembl")
+mouse <- useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+genesV2 <-  getLDS(attributes = c("rgd_symbol"), filters = "rgd_symbol", values = x , mart = rat, attributesL = c("hgnc_symbol"), martL = human, uniqueRows=T)
+humanx <- unique(genesV2[, 2])
+return(genesV2)
+}
+
+#Create table of converted names
+rat <- row.names(rna.mx)
+
+converted <- convertratGeneList(rat)
+
+#Reduce to names that have homolog
+case.hg.mx <- rna.mx[row.names(rna.mx) %in% converted$RGD.symbol,]
+
+#Filter gene names to match
+converted.r <- converted[converted$RGD.symbol %in% row.names(rna.mx) & !duplicated(converted$RGD.symbol),]
+
+converted.r <- converted.r[order(match(converted.r$RGD.symbol, row.names(case.hg.mx))),]
+
+#Check if the two align
+sum(row.names(case.hg.mx) != converted.r$RGD.symbol )
+
+#Add human gene names
+row.names(case.hg.mx) <- converted.r$HGNC.symbol
+
+
+```
+
+#Function to convert rat to human genes - control
+```{r}
+
+rna.mx <- control@assays$RNA@data %>% as.matrix()
+
+#Create table of converted names
+rat <- row.names(rna.mx)
+
+converted <- convertratGeneList(rat)
+
+#Reduce to names that have homolog
+control.hg.mx <- rna.mx[row.names(rna.mx) %in% converted$RGD.symbol,]
+
+#Filter gene names to match
+converted.r <- converted[converted$RGD.symbol %in% row.names(rna.mx) & !duplicated(converted$RGD.symbol),]
+
+converted.r <- converted.r[order(match(converted.r$RGD.symbol, row.names(control.hg.mx))),]
+
+#Check if the two align
+sum(row.names(control.hg.mx) != converted.r$RGD.symbol )
+
+#Add human gene names
+row.names(control.hg.mx) <- converted.r$HGNC.symbol
+
+
+```
+
+#Create format for cellphonedb
+```{r}
+
+meta.case <- case@meta.data[, colnames(case@meta.data) %in% c("cc", "comp1", "celltype")] %>% subset(select=c(celltype, comp1, cc))
+meta.control <- control@meta.data[, colnames(control@meta.data) %in% c("cc", "comp2", "celltype")] %>% subset(select=c(celltype, comp2, cc))
+
+#export
+write.table(case.hg.mx, "scripts/cellphonedb/count.matrix.case.txt", quote=FALSE, sep="\t")
+write.table(meta.case, "scripts/cellphonedb/metadata.case.txt", quote=FALSE, sep="\t")
+
+write.table(control.hg.mx, "scripts/cellphonedb/count.matrix.control.txt", quote=FALSE, sep="\t")
+write.table(meta.control, "scripts/cellphonedb/metadata.control.txt", quote=FALSE, sep="\t")
+
+#Clean up data
+rm(converted, converted.r, rna.mx, expr.plot, grid, npcs, p1, p2, rat, convertratGeneList)
+
+```
+
+#Load cellphoneDB output
+```{r}
+
+deconv.case <- read.table("scripts/cellphonedb/case_out/deconvoluted.txt", sep="\t", stringsAsFactors = FALSE, header=TRUE, check.names=FALSE)
+means.case <- read.table("scripts/cellphonedb/case_out/means.txt", sep="\t", stringsAsFactors = FALSE, header=TRUE, check.names=FALSE)
+pval.case <- read.table("scripts/cellphonedb/case_out/pvalues.txt", sep="\t", stringsAsFactors = FALSE, header=TRUE, check.names=FALSE)
+smeans.case <- read.table("scripts/cellphonedb/case_out/significant_means.txt", sep="\t", stringsAsFactors = FALSE, header=TRUE, check.names=FALSE)
+
+#Set rownames
+rownames(means.case) <- means.case$id_cp_interaction
+rownames(pval.case) <- pval.case$id_cp_interaction
+rownames(smeans.case) <- smeans.case$id_cp_interaction
+
+#Work with significant interactions
+df <- smeans.case[,1:12]
+
+smeans.case <- smeans.case[,13:ncol(smeans.case)]
+pval.case <- pval.case[,12:ncol(pval.case)]
+means.case <- means.case[,12:ncol(means.case)]
+
+
+```
+
+#Count number of interactions between populations
+```{r}
+
+grs <- unique(unlist(sapply(colnames(pval.case), function(z) strsplit(z, split="\\|")[[1]],simplify = FALSE)))
+
+### Counts of interaction types between populations #####
+cnt_interactions <- function(xx, grs) {
+  CNT <- colSums(xx< 0.05)
+  MAT <- matrix(0, ncol=length(grs), nrow=length(grs), dimnames=list(grs,grs))
+  for(case in names(CNT)) {
+    cnt <- CNT[case]
+    gr <- strsplit(case, split="\\|")[[1]]
+    MAT[gr[1], gr[2]] <- MAT[gr[1], gr[2]] + cnt
+    MAT[gr[2], gr[1]] <- MAT[gr[2], gr[1]] + cnt
+  }
+  return(MAT)
+}
+
+MAT <- cnt_interactions(xx=pval.case, grs)
+
+
+#--- Directional through ligands to receptor (removing receptor x receptor and ligand x ligand)
+cnts_sub1 <- colSums(pval.case[df$receptor_a=="True" & df$receptor_b=="False",] < 0.05)
+cnts_sub2 <- colSums(pval.case[df$receptor_a=="False" & df$receptor_b=="True",] < 0.05)
+
+# We have to revert their names to be sum with the previous
+names(cnts_sub2) <- sapply(names(cnts_sub2),function(z) paste(rev(strsplit(z,split="\\|")[[1]]),collapse = "|"))
+cnts_sub2 <- cnts_sub2[names(cnts_sub1)] # same order
+# Add both directionals
+cnts <- cnts_sub1 + cnts_sub2
+RECxLIG <- matrix(NA, ncol=length(grs), nrow=length(grs), dimnames=list(grs,grs))
+for(case in names(cnts)) {
+  cnt <- cnts[case]
+  gr <- strsplit(case, split="\\|")[[1]]
+  RECxLIG[gr[1], gr[2]] <- cnt
+}
+rm(cnt, cnts, cnts_sub1, cnts_sub2, gr, case)
+
+```
+
+## Landscape visualization
+Color schema
+```{r color_schemas}
+colors5 <- c("#69a75b",
+             "#b75fb3",
+             "#bc8d3d",
+             "#6885d0",
+             "#cc5658")
+names(colors5) <- as.character(unique(meta.case$celltype))
+```
+
+### Graph of connections
+```{r CD10negative_cellphoneDB_graph, fig.width=11.5, fig.height=8.5, dpi=300}
+
+#create an igraph network object from the weighted adjacency matrix stored in pc
+net = igraph::graph_from_adjacency_matrix(MAT, weighted = TRUE)
+#remove multiple edges (meaning keep only one connection between each two cell clusters)
+
+net = igraph::simplify(net, edge.attr.comb = "max")
+
+#Some information to use in our plots
+Num.Interactions = E(net)$weight
+
+Strength = strength(net)
+
+#plot network with ggraph
+set.seed(113)
+lay = ggraph::create_layout(net, layout = "fr")
+gg <- ggraph(lay) + 
+  geom_edge_link(aes(color=Num.Interactions)) + 
+  scale_edge_colour_gradient(  low = "#cacfcf",
+                               high = "#b52002",
+                               space = "Lab",
+                               na.value = "grey50",
+                               guide = "edge_colourbar") +
+  geom_node_point(aes(size = Strength)) + 
+  geom_node_text(aes(label = grs), repel=TRUE, size=6) +
+  theme(panel.background = element_blank(),
+        legend.text = element_text(size=14),
+        legend.title = element_text(size=14))
+print(gg)
+```
+
+## Heatmap of directional lig-rec interactions
+```{r extended_data_Fig7a, fig.width=8.5, fig.height=4.5, dpi=300}
+
+Heatmap(RECxLIG, name="Num",col=c("lightgrey","red"),
+        row_title = "     Receptor", row_names_side = "left", row_title_gp = gpar(fontsize=22), show_row_dend = FALSE, show_column_dend = FALSE,
+        column_title = "Source of ligand release", column_names_side = "top", column_title_gp = gpar(fontsize=22))
+
+```
+
+# Count sending and recieving interactions
+```{r}
+cnts_senders <- colSums(pval.case[df$receptor_a=="True" & df$receptor_b=="False",] < 0.05) %>% as.data.frame()
+cnts_recievers <- colSums(pval.case[df$receptor_a=="False" & df$receptor_b=="True",] < 0.05) %>% as.data.frame()
+
+#Set column names
+colnames(cnts_senders) <- "count.send"
+colnames(cnts_recievers) <- "count.rec"
+
+#select senders and recievers from rownames
+cnts_senders$sender <- sapply(strsplit(row.names(cnts_senders),"\\|"), `[`, 1)
+cnts_recievers$recievers <- sapply(strsplit(row.names(cnts_recievers),"\\|"), `[`, 2)
+
+cnts_senders <- cnts_senders %>% group_by(sender) %>% mutate(count=sum(count.send)) %>% select(sender, count) %>% unique()
+cnts_recievers <- cnts_recievers %>% group_by(recievers) %>% mutate(count=sum(count.rec)) %>% select(recievers, count) %>% unique()
+
+#Order from largest to smallest
+cnts_senders <- cnts_senders[order(cnts_senders$count, decreasing = FALSE),]
+cnts_senders$sender <- factor(cnts_senders$sender, levels=cnts_senders$sender)
+
+cnts_recievers <- cnts_recievers[order(cnts_recievers$count, decreasing = FALSE),]
+cnts_recievers$recievers <- factor(cnts_recievers$recievers, levels=cnts_recievers$recievers)
+
+#Bar plots of senders and recievers
+ggplot(cnts_senders, aes(x=sender, y=count)) +
+  geom_bar(stat="identity") +
+  coord_flip()
+
+ggplot(cnts_recievers, aes(x=recievers, y=count)) +
+  geom_bar(stat="identity") +
+  coord_flip()
+
+
+```
+
+
+# Create Sankey plot
+```{r}
+
+#Create data for Sankey
+#sigint <- 
+
+p <- sankeyNetwork(Links = Energy$links, Nodes = Energy$nodes, Source = "source",
+              Target = "target", Value = "value", NodeID = "name",
+              units = "TWh", fontSize = 12, nodeWidth = 30)
+
+```
+

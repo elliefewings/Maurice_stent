@@ -1,0 +1,3 @@
+*.Rdata
+results/*.Rdata
+scripts/cellphonedb/count.matrix*

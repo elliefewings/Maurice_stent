@@ -1,0 +1,240 @@
+---
+author: "Eleanor Fewings"
+output: html_document
+---
+
+# start_section  
+```{r start_section}
+
+# Time stamp
+Sys.time()
+
+# Clean up
+rm(list=ls())
+
+# Load libraries
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(clustree)
+library(monocle3)
+library(stringr)
+library(SeuratWrappers)
+library(mclust)
+library(genesorteR)
+
+# Folders
+setwd("~/Saez/Maurice_stent_analysis/pseudotime")
+outdir <- "~/Saez/Maurice_stent_analysis/pseudotime/"
+```
+
+# Install monacle3
+```{r}
+
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#install.packages("BiocManager")
+#BiocManager::install(version = "3.10")
+
+#BiocManager::install(c('BiocGenerics', 'DelayedArray', 'DelayedMatrixStats',
+#                       'limma', 'S4Vectors', 'SingleCellExperiment',
+#                       'SummarizedExperiment', 'batchelor', 'Matrix.utils'))
+
+#install.packages("devtools")
+#devtools::install_github('cole-trapnell-lab/leidenbase')
+#devtools::install_github('cole-trapnell-lab/monocle3')
+
+```
+
+
+#Load Maurice RDS file
+```{r}
+
+fibroblast  <- readRDS("cluster3integrated.rds")
+vsmc <- readRDS("cluster5integrated.rds")
+
+```
+
+#Clustering
+```{r}
+# Set resolution
+res <- 0.8
+
+# Cluster
+fibroblast <- FindNeighbors(fibroblast, reduction = 'pca', dims = 1:30, k.param = 60)
+fibroblast <- FindClusters(fibroblast, resolution = res, verbose = FALSE)
+fibroblast <- RunUMAP(fibroblast, dims = 1:30, n.neighbors = 60)
+DimPlot(fibroblast, reduction = "umap", label = TRUE,group.by = "cc")
+
+
+#integrate based on RNA --> on second thought the fibroblast umap based on RNA doesn't look to bad maybe we can also try the monocle3 on this
+
+#DefaultAssay(fibroblast) = "RNA"
+#fibroblast <- FindVariableFeatures(fibroblast, selection.method = 'vst', nfeatures = 2000, verbose = FALSE)
+
+#selection PCA UMAP
+#fibroblast <- ScaleData(fibroblast, verbose = FALSE, features = rownames(sc))
+#fibroblast <- RunPCA(fibroblast, verbose = FALSE)
+
+# Cluster
+#fibroblast <- FindNeighbors(fibroblast, reduction = 'pca', dims = 1:30, k.param = 60)
+#fibroblast <- FindClusters(fibroblast, resolution = res, verbose = FALSE)
+#fibroblast <- RunUMAP(fibroblast, dims = 1:30, n.neighbors = 60)
+
+#DimPlot(fibroblast, reduction = "umap", label = TRUE,group.by = "cc")
+
+```
+
+#Calculate combined collagen score
+```{r}
+
+processNABA = function(filepath = 'NABAgsets.xls') {
+  con = file(filepath, "r")
+  naba_gsets = list()
+  while ( TRUE ) {
+    line = readLines(con, n = 1)
+    if ( length(line) == 0 ) {
+      break
+    }
+  split_line = unlist(strsplit(line,split="\t"))
+  naba_gsets[[split_line[1]]] = split_line[3:length(split_line)]
+  }
+  close(con)
+  return(naba_gsets)
+}
+
+NABA = processNABA()
+NABA_SETS = names(NABA)
+
+features = list(gset = str_to_title(NABA[["NABA_COLLAGENS"]]))
+
+for (gset in NABA_SETS){
+    features = list(gset = str_to_title(NABA[[gset]]))
+    # Add average expression of genes in gset minus the average expression of
+    # 35 random genes 
+    fibroblast = AddModuleScore(object = fibroblast, features = features, name = gset, ctrl = 35)
+
+
+    pdf(file = paste0(outdir, 'integrated_', gset, '_featureplot.pdf'))
+    print(FeaturePlot(fibroblast, features = paste0(gset, '1'), label = FALSE) + 
+      scale_colour_gradient2(low = 'blue', mid = 'lightgrey', high = 'red', 
+    midpoint = 0, limits = c(-0.5,0.5), oob = scales::squish))
+    dev.off()
+
+    pdf(file = paste0(outdir, 'integrated_', gset, '_violinplot.pdf'), width = 11)
+    print(VlnPlot(fibroblast, features = paste0(gset, '1'), pt.size = 0) + 
+      theme(axis.title.x=element_blank(),
+      axis.text.x=element_text(angle = 90)))
+    dev.off()
+
+}
+
+#No real correlation with combined collagen score
+
+```
+
+#Create cell set for clustering
+```{r}
+
+cds <- as.cell_data_set(fibroblast)
+
+
+# Cluster cells with Leiden clustering
+cds = cluster_cells(cds, cluster_methods = 'leiden', reduction_method = 'UMAP')
+
+sc.sub = subset(as.Seurat(cds), monocle3_partitions == 1)
+cds = as.cell_data_set(sc.sub)
+
+
+# Trajectory analysis
+cds = learn_graph(cds)
+
+```
+
+#Project trajectories
+```{r}
+
+#Monocle3 Trajectory markers for both Fibro and VSMC: Postn, Col4a2, Pdgfrb & Acta2(VSMC only)
+
+progenitor <- "Col4a2"
+
+#Set progenitor
+max.progenitor = which.max(unlist(FetchData(sc.sub, progenitor)))
+max.progenitor = colnames(sc.sub)[max.progenitor]
+cds = order_cells(cds, root_cells = max.progenitor)
+
+
+sc.sub = as.Seurat(cds, assay = 'integrated')
+
+#Add pseudotimes back to seurat object
+fibroblast$monocle3_clusters = sc.sub$monocle3_clusters
+fibroblast$monocle3_partitions = sc.sub$monocle3_partitions
+fibroblast$monocle3_pseudotime = sc.sub$monocle3_pseudotime
+
+```
+
+#Create plots
+```{r}
+
+pdf(file = 'fib_monocle3_pseudotime.pdf')
+plot_cells(cds, label_groups_by_cluster = FALSE, label_leaves = FALSE, 
+	label_branch_points = FALSE)
+plot_cells(cds, color_cells_by = 'pseudotime', label_cell_groups = FALSE, 
+	label_leaves = FALSE, label_branch_points = FALSE)
+plot_cells(cds, color_cells_by = 'pseudotime', label_cell_groups = FALSE, 
+	label_leaves = FALSE, label_branch_points = FALSE,
+	show_trajectory_graph = FALSE)
+FeaturePlot(sc.sub, feature = 'monocle3_pseudotime')
+dev.off()
+
+
+
+pdf(file = 'vsmc_monocle3_pseudotime.pdf')
+test$p1
+test$p2
+test$p3
+test$p4
+dev.off()
+
+```
+
+#Find differential expressed genes
+```{r}
+
+cds <-  estimate_size_factors(cds)
+
+cds@rowRanges@elementMetadata@listData[['gene_short_name']] = rownames(fibroblast[['integrated']])
+
+cds_dif_test = graph_test(cds, neighbor_graph = 'principal_graph', cores = 4)
+
+write.table(cds_dif_test[,c(5,1,2,3,4,6)], file = 'fib.monocle3.dge.genes.txt', 
+	sep = '\t', quote = FALSE, row.names = FALSE)
+
+
+# Get top genes
+n = 40
+cds_dif_test = cds_dif_test[cds_dif_test$q_value < 0.05,]
+gene.list = cds_dif_test %>%
+	arrange(desc(morans_test_statistic), desc(-q_value)) %>% 
+	rownames()
+top.genes = gene.list[1:n]
+
+top <- cds_dif_test[rownames(cds_dif_test) %in% top.genes,]
+
+write.table(top[,c(5,1,2,3,4,6)], file = 'fib.monocle3.dge.genes.top40.txt', 
+	sep = '\t', quote = FALSE, row.names = FALSE)
+
+
+# Cluster cells (based on pseudotime) for heatmap
+kk = Mclust(-fibroblast$monocle3_pseudotime, 5, modelNames = 'E')
+
+
+# Cluster genes with k-means clustering
+plot <- plotMarkerHeat(fibroblast@assays$RNA@data[,order(fibroblast$monocle3_pseudotime, decreasing = FALSE)], 
+	kk$classification[order(fibroblast$monocle3_pseudotime, decreasing = TRUE)], 
+	top.genes, averageCells = 10^1, clusterGenesK = 5, 
+	gap = FALSE, outs = TRUE, plotheat = TRUE)
+
+
+```
+

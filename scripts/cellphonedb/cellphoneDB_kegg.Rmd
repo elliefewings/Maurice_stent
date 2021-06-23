@@ -1,0 +1,143 @@
+---
+author: "Eleanor Fewings"
+output: html_document
+---
+
+# start_section  
+```{r start_section}
+
+# Time stamp
+Sys.time()
+
+# Clean up
+rm(list=ls())
+
+# Load libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(magrittr)
+library(Seurat)
+library(cowplot)
+library(stringr)
+
+# Folders
+setwd("~/Saez/Maurice_stent_analysis/")
+
+```
+
+
+## Load data
+```{r load}
+
+load("results/integration.de.RData")
+
+```
+
+#Extract KEGG pathways of interest
+```{r kegg}
+
+avg.3.lfc <- AverageExpression(subset(data, subset= cluster == 3), verbose = FALSE)$RNA
+rownames(avg.3.lfc) <- str_to_upper(rownames(avg.3.lfc))
+
+kegg <- read.table("c2.cp.kegg.v7.2.symbols.gmt", sep="\t", stringsAsFactors = FALSE, header=TRUE)
+
+bcell <- kegg$KEGG_B_CELL_RECEPTOR_SIGNALING_PATHWAY[!is.na(kegg$KEGG_B_CELL_RECEPTOR_SIGNALING_PATHWAY)]
+chemo <- kegg$KEGG_CHEMOKINE_SIGNALING_PATHWAY[!is.na(kegg$KEGG_CHEMOKINE_SIGNALING_PATHWAY)]
+cyto <- kegg$KEGG_CYTOKINE_CYTOKINE_RECEPTOR_INTERACTION[!is.na(kegg$KEGG_CYTOKINE_CYTOKINE_RECEPTOR_INTERACTION)]
+hedge <- kegg$KEGG_HEDGEHOG_SIGNALING_PATHWAY[!is.na(kegg$KEGG_HEDGEHOG_SIGNALING_PATHWAY)]
+intest <- kegg$KEGG_INTESTINAL_IMMUNE_NETWORK_FOR_IGA_PRODUCTION[!is.na(kegg$KEGG_INTESTINAL_IMMUNE_NETWORK_FOR_IGA_PRODUCTION)]
+prot <- kegg$KEGG_PROTEASOME[!is.na(kegg$KEGG_PROTEASOME)]
+
+
+#Add new LFC to table
+avg.3.lfc$lfc <- log(avg.3$case/avg.3$control,2)
+
+bc.3 <- avg.3.lfc[row.names(avg.3.lfc) %in% bcell,]
+che.3 <- avg.3.lfc[row.names(avg.3.lfc) %in% chemo,]
+cyto.3 <- avg.3.lfc[row.names(avg.3.lfc) %in% cyto,]
+hedge.3 <- avg.3.lfc[row.names(avg.3.lfc) %in% hedge,]
+intest.3 <- avg.3.lfc[row.names(avg.3.lfc) %in% intest,]
+prot.3 <- avg.3.lfc[row.names(avg.3.lfc) %in% prot,]
+
+#Remove NANs and INfs
+bc.3$lfc <- ifelse(is.na(bc.3$lfc) | is.infinite(bc.3$lfc), 0, bc.3$lfc)
+che.3$lfc <- ifelse(is.na(che.3$lfc) | is.infinite(che.3$lfc), 0, che.3$lfc)
+cyto.3$lfc <- ifelse(is.na(cyto.3$lfc) | is.infinite(cyto.3$lfc), 0, cyto.3$lfc)
+
+#Adapt to save any table
+write.table(cyto.3, "kegg/LFC_cyto.txt", sep="\t", quote = FALSE)
+
+```
+
+#Clean up unnecessary data
+```{r clean}
+
+rm(list=c(ls(pattern="^stent"), ls(pattern="^avg")))
+
+```
+
+#Function to convert rat to human genes
+```{r}
+
+rna.mx <- data@assays$RNA@data %>% as.matrix()
+
+convertratGeneList <- function(x){
+require("biomaRt")
+human <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+rat <- useMart("ensembl", dataset = "rnorvegicus_gene_ensembl")
+mouse <- useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+genesV2 <-  getLDS(attributes = c("rgd_symbol"), filters = "rgd_symbol", values = x , mart = rat, attributesL = c("hgnc_symbol"), martL = human, uniqueRows=T)
+humanx <- unique(genesV2[, 2])
+return(genesV2)
+}
+
+#Create table of converted names
+rat <- row.names(rna.mx)
+
+converted <- convertratGeneList(rat)
+
+#Reduce to names that have homolog
+rna.hg.mx <- rna.mx[row.names(rna.mx) %in% converted$RGD.symbol,]
+
+#Filter gene names to match
+converted.r <- converted[converted$RGD.symbol %in% row.names(rna.mx) & !duplicated(converted$RGD.symbol),]
+
+converted.r <- converted.r[order(match(converted.r$RGD.symbol, row.names(rna.hg.mx))),]
+
+#Check if the two align
+sum(row.names(rna.hg.mx) != converted.r$RGD.symbol )
+
+#Add human gene names
+row.names(rna.hg.mx) <- converted.r$HGNC.symbol
+
+
+```
+
+
+#Create format for cellphonedb
+```{r}
+
+meta <- data@meta.data[, colnames(data@meta.data) %in% c("cc", "cluster")]
+
+#export (should be tab separated, edited post export)
+write.table(rna.hg.mx, "scripts/cellphonedb/count.matrix.txt", quote=FALSE)
+write.table(meta, "scripts/cellphonedb/metadata.txt", quote=FALSE)
+
+#Clean up data
+rm(converted, converted.r, rna.mx, expr.plot, grid, npcs, p1, p2, rat, convertratGeneList)
+
+```
+
+#Load cellphoneDB output
+```{r}
+
+deconv <- read.table("scripts/cellphonedb/out/deconvoluted.txt", sep="\t", stringsAsFactors = FALSE, header=TRUE)
+means <- read.table("scripts/cellphonedb/out/means.txt", sep="\t", stringsAsFactors = FALSE, header=TRUE)
+pval <- read.table("scripts/cellphonedb/out/pvalues.txt", sep="\t", stringsAsFactors = FALSE, header=TRUE)
+smeans <- read.table("scripts/cellphonedb/out/significant_means.txt", sep="\t", stringsAsFactors = FALSE, header=TRUE)
+  
+```
+
+
+

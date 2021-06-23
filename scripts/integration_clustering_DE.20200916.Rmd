@@ -1,0 +1,291 @@
+---
+author: "Eleanor Fewings"
+output: html_document
+---
+
+# start_section  
+
+```{r start_section}
+
+# Time stamp
+Sys.time()
+
+# Clean up
+rm(list=ls())
+
+# Load libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(magrittr)
+library(Seurat)
+library(cowplot)
+library(knitr)
+
+
+# Source functions
+source("scripts/source.R")
+
+```
+
+#Read objects in
+```{r read}
+# Load cases
+load("results/MH3_seurat_processed_clustered.Rdata")
+
+# Rename stent object
+stent <- pbmc
+
+# Add casecontrol label
+stent$cc <- "case"
+
+# Load controls
+load("results/MH5_seurat_processed_clustered.Rdata")
+
+# Rename control object
+control <- pbmc
+
+# Add casecontrol label
+control$cc <- "control"
+
+# Cleanup
+rm(pbmc)
+
+```
+
+#Merge objects
+```{r merge}
+
+# Find anchors
+anchors <- FindIntegrationAnchors(object.list = list(stent, control), dims = 1:20)
+
+# Integrate data
+data <- IntegrateData(anchorset = anchors, dims= 1:20)
+
+# Label assay
+DefaultAssay(data) <- "integrated"
+
+# Scale data on variable features (can be changed if requested)
+data <- ScaleData(data, verbose = FALSE)
+
+# Run PCA
+data <- RunPCA(data, features = VariableFeatures(object = data), verbose = FALSE)
+
+npcs <- get_npcs(seurat_object = data, create_plot = TRUE)
+
+# Plot elbow plot for selection of principle components
+npcs$plot
+
+# Run UMAP
+data <- RunUMAP(data, reduction = "pca", dims = 1:8, verbose = FALSE)
+
+# Find neighbours
+data <- FindNeighbors(data, reduction = "pca", dims = 1:8)
+data <- FindClusters(data, resolution = 0.2)
+
+```
+
+#Visualise plots
+```{r visualisation}
+
+# Plot cases vs controls
+p1 <- DimPlot(data, reduction = "umap", group.by = "cc")
+
+# Plot clusters
+p2 <- DimPlot(data, reduction = "umap", label = TRUE)
+
+# Create grid of plots
+grid <- plot_grid(p1, p2)
+
+grid
+
+```
+
+#Label cell types
+```{r cell types}
+
+# Find markers for all clusters
+clust.markers <- FindAllMarkers(data, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25, verbose = FALSE)
+
+# Add cluster label
+
+data$cluster <- Idents(data)
+
+## To be completed if cell types supplied
+
+
+
+```
+
+
+#Identify differentially expressed genes
+```{r DE}
+
+# Set case control identities
+Idents(data) <- "cc"
+
+# Gather average expression
+avg <- log1p(AverageExpression(data, verbose = FALSE)$RNA)
+
+expr.plot <- ggplot(avg, aes(control, case)) + geom_point()
+
+# Find case control markers
+stent.response <- FindMarkers(data, ident.1 = "case", ident.2 = "control", verbose = FALSE)
+head(stent.response, n = 15)
+
+# Add average expression for cases
+stent.response <- merge(stent.response, avg, by = "row.names", all.x=TRUE, all.y=FALSE)
+
+colnames(stent.response)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+
+# Plot (change to view specific features of interest)
+FeaturePlot(data, features = c("Mcpt1l1", "Ptgs2"), split.by = "cc", max.cutoff = 3, cols = c("grey", "red"))
+
+```
+
+#Identify differentially expressed genes per cluster
+```{r DEC, error=TRUE}
+
+# gather response genes per cluster
+stent.response.0 <- subset(data, subset= cluster == 0) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE)
+stent.response.1 <- subset(data, subset= cluster == 1) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE)
+stent.response.2 <- subset(data, subset= cluster == 2) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE)
+stent.response.3 <- subset(data, subset= cluster == 3) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE)
+stent.response.4 <- subset(data, subset= cluster == 4) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE)
+stent.response.5 <- subset(data, subset= cluster == 5) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE)
+stent.response.6 <- subset(data, subset= cluster == 6) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE)
+stent.response.7 <- subset(data, subset= cluster == 7) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE)
+stent.response.8 <- subset(data, subset= cluster == 8) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE)
+stent.response.9 <- subset(data, subset= cluster == 9) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE)
+stent.response.10 <- subset(data, subset= cluster == 10) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE)
+
+# Gather average expression per cluster
+avg.0 <- log1p(AverageExpression(subset(data, subset= cluster == 0), verbose = FALSE)$RNA)
+avg.1 <- log1p(AverageExpression(subset(data, subset= cluster == 1), verbose = FALSE)$RNA)
+avg.2 <- log1p(AverageExpression(subset(data, subset= cluster == 2), verbose = FALSE)$RNA)
+avg.3 <- log1p(AverageExpression(subset(data, subset= cluster == 3), verbose = FALSE)$RNA)
+avg.4 <- log1p(AverageExpression(subset(data, subset= cluster == 4), verbose = FALSE)$RNA)
+avg.5 <- log1p(AverageExpression(subset(data, subset= cluster == 5), verbose = FALSE)$RNA)
+avg.6 <- log1p(AverageExpression(subset(data, subset= cluster == 6), verbose = FALSE)$RNA)
+avg.7 <- log1p(AverageExpression(subset(data, subset= cluster == 7), verbose = FALSE)$RNA)
+avg.8 <- log1p(AverageExpression(subset(data, subset= cluster == 8), verbose = FALSE)$RNA)
+avg.9 <- log1p(AverageExpression(subset(data, subset= cluster == 9), verbose = FALSE)$RNA)
+avg.10 <- log1p(AverageExpression(subset(data, subset= cluster == 10), verbose = FALSE)$RNA)
+
+
+#Add average expression for cases (not enough genes differentially expressed in cluster 9)
+stent.response.0 <- merge(stent.response.0, avg.0, by = "row.names", all.x=TRUE, all.y=FALSE)
+stent.response.1 <- merge(stent.response.1, avg.1, by = "row.names", all.x=TRUE, all.y=FALSE)
+stent.response.2 <- merge(stent.response.2, avg.2, by = "row.names", all.x=TRUE, all.y=FALSE)
+stent.response.3 <- merge(stent.response.3, avg.3, by = "row.names", all.x=TRUE, all.y=FALSE)
+stent.response.4 <- merge(stent.response.4, avg.4, by = "row.names", all.x=TRUE, all.y=FALSE)
+stent.response.5 <- merge(stent.response.5, avg.5, by = "row.names", all.x=TRUE, all.y=FALSE)
+stent.response.6 <- merge(stent.response.6, avg.6, by = "row.names", all.x=TRUE, all.y=FALSE)
+stent.response.7 <- merge(stent.response.7, avg.7, by = "row.names", all.x=TRUE, all.y=FALSE)
+stent.response.8 <- merge(stent.response.8, avg.8, by = "row.names", all.x=TRUE, all.y=FALSE)
+
+stent.response.10 <- merge(stent.response.10, avg.10, by = "row.names", all.x=TRUE, all.y=FALSE)
+
+
+# Change column names
+colnames(stent.response.0)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.1)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.2)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.3)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.4)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.5)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.6)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.7)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.8)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+
+colnames(stent.response.10)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+
+```
+
+
+#Identify differentially expressed genes per cluster - reporting all genes
+```{r DEC allgenes}
+
+# gather response genes per cluster
+stent.response.all.0 <- subset(data, subset= cluster == 0) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE, logfc.threshold=0, min.pct=0, min.cells.feature = 0, min.cells.group = 0, only.pos = FALSE)
+stent.response.all.1 <- subset(data, subset= cluster == 1) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE, logfc.threshold=0, min.pct=0, min.cells.feature = 0, min.cells.group = 0, only.pos = FALSE)
+stent.response.all.2 <- subset(data, subset= cluster == 2) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE, logfc.threshold=0, min.pct=0, min.cells.feature = 0, min.cells.group = 0, only.pos = FALSE)
+stent.response.all.3 <- subset(data, subset= cluster == 3) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE, logfc.threshold=0, min.pct=0, min.cells.feature = 0, min.cells.group = 0, only.pos = FALSE)
+stent.response.all.4 <- subset(data, subset= cluster == 4) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE, logfc.threshold=0, min.pct=0, min.cells.feature = 0, min.cells.group = 0, only.pos = FALSE)
+stent.response.all.5 <- subset(data, subset= cluster == 5) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE, logfc.threshold=0, min.pct=0, min.cells.feature = 0, min.cells.group = 0, only.pos = FALSE)
+stent.response.all.6 <- subset(data, subset= cluster == 6) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE, logfc.threshold=0, min.pct=0, min.cells.feature = 0, min.cells.group = 0, only.pos = FALSE)
+stent.response.all.7 <- subset(data, subset= cluster == 7) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE, logfc.threshold=0, min.pct=0, min.cells.feature = 0, min.cells.group = 0, only.pos = FALSE)
+stent.response.all.8 <- subset(data, subset= cluster == 8) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE, logfc.threshold=0, min.pct=0, min.cells.feature = 0, min.cells.group = 0, only.pos = FALSE)
+stent.response.all.9 <- subset(data, subset= cluster == 9) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE, logfc.threshold=0, min.pct=0, min.cells.feature = 0, min.cells.group = 0, only.pos = FALSE)
+stent.response.all.10 <- subset(data, subset= cluster == 10) %>% FindMarkers(ident.1 = "case", ident.2 = "control", verbose = FALSE, logfc.threshold=0, min.pct=0, min.cells.feature = 0, min.cells.group = 0, only.pos = FALSE)
+
+#Add average expression for cases
+stent.response.all.0 <- merge(stent.response.all.0, avg.0, by = "row.names", all=TRUE)
+stent.response.all.1 <- merge(stent.response.all.1, avg.1, by = "row.names", all=TRUE)
+stent.response.all.2 <- merge(stent.response.all.2, avg.2, by = "row.names", all=TRUE)
+stent.response.all.3 <- merge(stent.response.all.3, avg.3, by = "row.names", all=TRUE)
+stent.response.all.4 <- merge(stent.response.all.4, avg.4, by = "row.names", all=TRUE)
+stent.response.all.5 <- merge(stent.response.all.5, avg.5, by = "row.names", all=TRUE)
+stent.response.all.6 <- merge(stent.response.all.6, avg.6, by = "row.names", all=TRUE)
+stent.response.all.7 <- merge(stent.response.all.7, avg.7, by = "row.names", all=TRUE)
+stent.response.all.8 <- merge(stent.response.all.8, avg.8, by = "row.names", all=TRUE)
+stent.response.all.9 <- merge(stent.response.all.9, avg.9, by = "row.names", all=TRUE)
+stent.response.all.10 <- merge(stent.response.all.10, avg.10, by = "row.names", all=TRUE)
+
+
+# Change column names
+colnames(stent.response.all.0)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.all.1)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.all.2)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.all.3)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.all.4)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.all.5)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.all.6)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.all.7)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.all.8)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.all.9)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+colnames(stent.response.all.10)[7:8] <- c("log1p_avg_cases", "log1p_avg_controls")
+
+```
+
+#Save data
+```{r save}
+
+# Clean up
+rm(anchors, control, stent, assign.identity, get_npcs)
+
+# Save data
+save.image("results/integration.de.RData")
+
+# Write csv
+write.csv(stent.response, "results/de.stentvscontrol.20200916.csv")
+
+# Write csv per cluster
+write.csv(stent.response.0, "results/de.cluster0_stentvscontrol.20200916.csv")
+write.csv(stent.response.1, "results/de.cluster1_stentvscontrol.20200916.csv")
+write.csv(stent.response.2, "results/de.cluster2_stentvscontrol.20200916.csv")
+write.csv(stent.response.3, "results/de.cluster3_stentvscontrol.20200916.csv")
+write.csv(stent.response.4, "results/de.cluster4_stentvscontrol.20200916.csv")
+write.csv(stent.response.5, "results/de.cluster5_stentvscontrol.20200916.csv")
+write.csv(stent.response.6, "results/de.cluster6_stentvscontrol.20200916.csv")
+write.csv(stent.response.7, "results/de.cluster7_stentvscontrol.20200916.csv")
+write.csv(stent.response.8, "results/de.cluster8_stentvscontrol.20200916.csv")
+write.csv(stent.response.10, "results/de.cluster10_stentvscontrol.20200916.csv")
+
+# Write csv per cluster (all genes)
+write.csv(stent.response.all.0, "results/de.cluster0_stentvscontrol_allgenes.20200916.csv")
+write.csv(stent.response.all.1, "results/de.cluster1_stentvscontrol_allgenes.20200916.csv")
+write.csv(stent.response.all.2, "results/de.cluster2_stentvscontrol_allgenes.20200916.csv")
+write.csv(stent.response.all.3, "results/de.cluster3_stentvscontrol_allgenes.20200916.csv")
+write.csv(stent.response.all.4, "results/de.cluster4_stentvscontrol_allgenes.20200916.csv")
+write.csv(stent.response.all.5, "results/de.cluster5_stentvscontrol_allgenes.20200916.csv")
+write.csv(stent.response.all.6, "results/de.cluster6_stentvscontrol_allgenes.20200916.csv")
+write.csv(stent.response.all.7, "results/de.cluster7_stentvscontrol_allgenes.20200916.csv")
+write.csv(stent.response.all.8, "results/de.cluster8_stentvscontrol_allgenes.20200916.csv")
+write.csv(stent.response.all.9, "results/de.cluster8_stentvscontrol_allgenes.20200916.csv")
+write.csv(stent.response.all.10, "results/de.cluster10_stentvscontrol_allgenes.20200916.csv")
+
+
+```
+
+

@@ -1,0 +1,141 @@
+---
+author: "Eleanor Fewings"
+output: html_document
+---
+
+# start_section  
+```{r start_section}
+
+# Time stamp
+Sys.time()
+
+# Clean up
+rm(list=ls())
+
+# Load libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(magrittr)
+library(Seurat)
+library(cowplot)
+library(stringr)
+library(igraph)
+library(ComplexHeatmap)
+library(ggraph)
+library(networkD3)
+library(gplots)
+
+# Folders
+setwd("~/Saez/Maurice_stent_analysis/")
+
+```
+
+#Load cellphoneDB output
+```{r}
+
+pval.case <- read.table("scripts/cellphonedb/case_out/pvalues.txt", sep="\t", stringsAsFactors = FALSE, header=TRUE, check.names=FALSE)
+means.case <- read.table("scripts/cellphonedb/case_out/means.txt", sep="\t", stringsAsFactors = FALSE, header=TRUE, check.names=FALSE)
+signif.case <- read.table("scripts/cellphonedb/case_out/significant_means.txt", sep="\t", stringsAsFactors = FALSE, header=TRUE, check.names=FALSE)
+
+#Set rownames
+rownames(pval.case) <- pval.case$id_cp_interaction
+rownames(means.case) <- means.case$id_cp_interaction
+rownames(signif.case) <- signif.case$id_cp_interaction
+
+#Add rank value to means file
+signif.case <- signif.case %>% select(id_cp_interaction, rank)
+means.case <- merge(signif.case, means.case, by="id_cp_interaction")
+
+#Select significant interactions from pval
+sig.F <- pval.case$id_cp_interaction[pval.case$`Fibroblast|VSMC` < 0.05]
+sig.V <- pval.case$id_cp_interaction[pval.case$`VSMC|Fibroblast` < 0.05]
+
+#Remove RBCs
+pval.case <- pval.case[,!grepl("RBC", colnames(pval.case)) & !grepl("Unknown", colnames(pval.case))]
+means.case <- means.case[,!grepl("RBC", colnames(means.case)) & !grepl("Unknown", colnames(means.case))]
+
+```
+
+# Select interactions where VSMC or Fibs are the receptor
+```{r}
+
+longformat <- pval.case %>% gather(key="Pair", value="pval", 12:ncol(pval.case)) %>% separate(Pair, c("pair_a", "pair_b"),sep="\\|",remove=FALSE)
+
+#Create booleans if fibroblast or vsmc contains receptor in ligand receptor analysis
+longformat$fibroblast.receptor <- ifelse((longformat$receptor_a == "True" & longformat$receptor_b == "False" & longformat$pair_a == "Fibroblast") | (longformat$receptor_a == "False" & longformat$receptor_b == "True" & longformat$pair_b == "Fibroblast"), TRUE, FALSE)
+longformat$vsmc.receptor <- ifelse((longformat$receptor_a == "True" & longformat$receptor_b == "False" & longformat$pair_a == "VSMC") | (longformat$receptor_a == "False" & longformat$receptor_b == "True" & longformat$pair_b == "VSMC"), TRUE, FALSE)
+
+#Select interactions where either fibs or vsmc are receptors
+shortened <- longformat[longformat$fibroblast.receptor == TRUE | longformat$vsmc.receptor == TRUE,]
+
+#Count number of significant interactions
+shortened <- shortened %>% group_by(Pair, fibroblast.receptor) %>% mutate(countint=sum(pval < 0.05))
+
+#Label ligand celltype
+shortened$ligand.cell <- ifelse((shortened$fibroblast.receptor == TRUE & shortened$pair_a == "Fibroblast") | 
+                                (shortened$vsmc.receptor == TRUE & shortened$pair_a == "VSMC"),
+                                shortened$pair_b, shortened$pair_a)
+
+# Label receptor
+shortened$receptor.cell <- ifelse(shortened$fibroblast.receptor == TRUE, "Fibroblast", "VSMC")
+
+#Create matrix from data
+mx <- shortened %>% subset(select=c(ligand.cell, receptor.cell, countint)) %>% unique() %>% mutate(grouped_id = row_number()) %>% spread(receptor.cell, countint) %>% select(-grouped_id)
+
+#Summarise counts
+mx <- mx %>% group_by(ligand.cell) %>% summarise_all(funs(sum), na.rm = TRUE)
+
+lc <- mx$ligand.cell
+
+#Format rownames
+mx <- mx %>% select(-ligand.cell) %>% as.matrix()
+
+row.names(mx) <- lc
+
+
+#Plot heatmap
+
+heatmap(t(mx), xlab = "Celltypes with ligand", ylab="Celltypes with receptor")
+
+```
+
+# Look at top significant interactions
+```{r}
+
+#Create same format for means
+longformat.means <- means.case %>% gather(key="Pair", value="mean", 13:ncol(means.case)) %>% separate(Pair, c("pair_a", "pair_b"),sep="\\|",remove=FALSE)
+
+#Create booleans if fibroblast or vsmc contains receptor in ligand receptor analysis
+longformat.means$fibroblast.receptor <- ifelse((longformat.means$receptor_a == "True" & longformat.means$receptor_b == "False" & longformat.means$pair_a == "Fibroblast") | (longformat.means$receptor_a == "False" & longformat.means$receptor_b == "True" & longformat.means$pair_b == "Fibroblast"), TRUE, FALSE)
+longformat.means$vsmc.receptor <- ifelse((longformat.means$receptor_a == "True" & longformat.means$receptor_b == "False" & longformat.means$pair_a == "VSMC") | (longformat.means$receptor_a == "False" & longformat.means$receptor_b == "True" & longformat.means$pair_b == "VSMC"), TRUE, FALSE)
+
+#Select interactions where either fibs or vsmc are receptors
+shortened.means <- longformat.means[longformat.means$fibroblast.receptor == TRUE | longformat.means$vsmc.receptor == TRUE,]
+
+#Merge means and pvals
+shortened.means <- shortened.means %>% subset(select=c("id_cp_interaction", "rank", "interacting_pair", "Pair", "mean"))
+
+merged <- merge(shortened, shortened.means, by=c("id_cp_interaction", "interacting_pair", "Pair"))
+
+#Select significant values
+sig <- merged[merged$pval < 0.05,]
+
+#Order group by mean
+sig <- sig[order(sig$ligand.cell, sig$receptor.cell, sig$rank, decreasing = TRUE),]
+
+#Label position in group
+sig$lab <- 1
+sig <- sig %>% group_by(ligand.cell, receptor.cell) %>% mutate(pos=cumsum(lab))
+
+#Select top 10 per group
+sig.short <- sig %>% filter(pos < 6)
+
+#Plot
+ggplot(sig.short, aes(ligand.cell, interacting_pair, colour=rank)) +
+  geom_point(size=5) +
+  facet_grid(~receptor.cell) +
+  scale_colour_continuous(high = "#132B43", low = "#56B1F7")
+
+```
+
